@@ -19,7 +19,9 @@ from data import regularize_pc_point_count, depth2pc, load_available_input_data
 from contact_grasp_estimator import GraspEstimator
 from visualization_utils import visualize_grasps, show_image
 
-def inference(global_config, checkpoint_dir, input_paths, K=None, local_regions=True, skip_border_objects=False, filter_grasps=True, segmap_id=None, z_range=[0.2,1.8], forward_passes=1):
+
+def inference(global_config, checkpoint_dir, input_paths, K=None, local_regions=True, skip_border_objects=False, filter_grasps=True, segmap_id=None, z_range=[0.2,1.8], forward_passes=1,
+              obj="cups", obj_id=None, can=False, ycb=False, file_name="test_cup"):
     """
     Predict 6-DoF grasp distribution for given model and input data
     
@@ -59,7 +61,14 @@ def inference(global_config, checkpoint_dir, input_paths, K=None, local_regions=
 
         pc_segments = {}
         segmap, rgb, depth, cam_K, pc_full, pc_colors = load_available_input_data(p, K=K)
-        
+        data = np.load(p, allow_pickle=True)
+        pcd_world = data["pcd"]
+        pcd_world_local = data["pcd_local"]
+        mat_trans = data["mat_trans"]
+        mat_trans_local = data["mat_trans_local"]
+        obj_pos = data["obj_pos"]
+        obj_quat = data["obj_quat"]
+
         if segmap is None and (local_regions or filter_grasps):
             raise ValueError('Need segmentation map to extract local regions or filter grasps')
 
@@ -73,16 +82,29 @@ def inference(global_config, checkpoint_dir, input_paths, K=None, local_regions=
                                                                                           local_regions=local_regions, filter_grasps=filter_grasps, forward_passes=forward_passes)  
 
         # Save results
-        np.savez('results/predictions_{}'.format(os.path.basename(p.replace('png','npz').replace('npy','npz'))), 
-                  pred_grasps_cam=pred_grasps_cam, scores=scores, contact_pts=contact_pts)
+        if can:
+            save_dir = os.path.join("results", obj, "canonical", file_name)
+        elif ycb:
+            save_dir = os.path.join("results", obj, "ycb", obj_id, file_name)
+        else:
+            save_dir = os.path.join("results", obj, obj_id, file_name)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        np.savez(save_dir + '/predictions_{}'.format(os.path.basename(p.replace('png','npz').replace('npy','npz'))),
+                 pcd=pc_full, pc_colors=pc_colors, pred_grasps_cam=pred_grasps_cam, scores=scores, contact_pts=contact_pts,
+                 segmap=segmap, rgb=rgb,
+                 mat_trans=mat_trans, mat_trans_local=mat_trans_local,
+                 pcd_obj=pcd_world, pcd_obj_local=pcd_world_local,
+                 obj_pos=obj_pos, obj_quat=obj_quat)
 
         # Visualize results          
-        show_image(rgb, segmap)
-        visualize_grasps(pc_full, pred_grasps_cam, scores, plot_opencv_cam=True, pc_colors=pc_colors)
+        # show_image(rgb, segmap)
+        # visualize_grasps(pc_full, pred_grasps_cam, scores, plot_opencv_cam=True, pc_colors=pc_colors)
         
     if not glob.glob(input_paths):
         print('No files found: ', input_paths)
-        
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -97,6 +119,11 @@ if __name__ == "__main__":
     parser.add_argument('--forward_passes', type=int, default=1,  help='Run multiple parallel forward passes to mesh_utils more potential contact points.')
     parser.add_argument('--segmap_id', type=int, default=0,  help='Only return grasps of the given object id')
     parser.add_argument('--arg_configs', nargs="*", type=str, default=[], help='overwrite config parameters')
+    parser.add_argument('--obj', type=str, default="cups", help='object type')
+    parser.add_argument('--obj_id', type=str, default=None, help='object id')
+    parser.add_argument('--can', action='store_true', help='if canonical shape')
+    parser.add_argument('--ycb', action='store_true', help='if ycb object')
+    parser.add_argument('--save_name', type=str, default="test_cup", help='save file name')
     FLAGS = parser.parse_args()
 
     global_config = config_utils.load_config(FLAGS.ckpt_dir, batch_size=FLAGS.forward_passes, arg_configs=FLAGS.arg_configs)
@@ -106,5 +133,6 @@ if __name__ == "__main__":
 
     inference(global_config, FLAGS.ckpt_dir, FLAGS.np_path if not FLAGS.png_path else FLAGS.png_path, z_range=eval(str(FLAGS.z_range)),
                 K=FLAGS.K, local_regions=FLAGS.local_regions, filter_grasps=FLAGS.filter_grasps, segmap_id=FLAGS.segmap_id, 
-                forward_passes=FLAGS.forward_passes, skip_border_objects=FLAGS.skip_border_objects)
+                forward_passes=FLAGS.forward_passes, skip_border_objects=FLAGS.skip_border_objects,
+                obj=FLAGS.obj, obj_id=FLAGS.obj_id, can=FLAGS.can, ycb=FLAGS.ycb, file_name=FLAGS.save_name)
 
